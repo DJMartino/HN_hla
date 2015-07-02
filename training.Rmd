@@ -5,35 +5,42 @@ date: "2 July 2015"
 output: word_document
 ---
 
-stage 1: exploration of data
+**stage 1: preparation of data**
 
 ```{r,}
+library(reshape)
+library(plyr)
 setwd("/Users/david/Documents/projects/healthnuts/hla/imputationData/imp2.v2/HN_hla")
 
+source('hlaAnalysis.R')
 rawdata=read.delim('HN2.hla.csv',header=T,sep=",")
 imputes=read.delim('HN2.hla.txt',header=T,sep="")
 phenotypes=read.delim('PEANUT_ALLERGY.4PLINK.phen',sep="",header=T)
+phenotypes$Phenotype=ifelse(phenotypes$PEANUT_ALLERGY==2,'cases', 
+             ifelse(phenotypes$PEANUT_ALLERGY==1,'controls', 'missing'))
 
 head(rawdata)
 tail(rawdata)
 table(rawdata$Gene)
 table(rawdata$Chromosome)
 summary(rawdata$Posterior)
+table(phenotypes$Phenotype,phenotypes$ANCESTRY)
+
+dat=merge(rawdata,phenotypes,by.x="IndividualID",by.y='IID')
+dat=dat[!dat$Phenotype=='missing',]
 ```
 
-merge imputations with phenotypes
+**stage2: Summaries and data structures to represent HLA allele data.**
+
+Counts the number of cases and controls for each allele.
+Creates a matrix representation which can be used for regression modelling.
+
+The input should be a data frame obtained by reading IMP1 or IMP2 imputation
+calls, with an extra column attached called "Phenotype" which takes two
+possible values: "cases" and "controls".
+
 ```{r}
-data=merge(imputes,phenotypes,by.x="IID",by.y="IID")
-
-
+hlaCounts(dat,callThreshold=0.7)
 ```
 
 
-
-You can also embed plots, for example:
-
-```{r, echo=FALSE}
-plot(cars)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
