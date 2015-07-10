@@ -2,23 +2,30 @@
 title: "hla_analysis"
 author: "David Martino"
 date: "2 July 2015"
-output: word_document
+output: 
+  word_document: 
+    fig_height: 6
 ---
 
 **stage 1: preparation of data**
 
-```{r,}
-library(reshape)
+```{r load packages, include=FALSE}
+Sys.setenv(http_proxy="http://proxy1.ap.webscanningservice.com:3128") 
+library(reshape2)
 library(plyr)
+source('hlaAnalysis_ancestry.R')
 setwd("/Users/david/Documents/projects/healthnuts/hla/imputationData/imp2.v2/HN_hla")
+```
 
-source('hlaAnalysis.R')
-rawdata=read.delim('HN2.hla.csv',header=T,sep=",")
+```{r read in data, include=FALSE}
+rawdata=read.delim('HN2.hla.csv',header=T,sep=",",colClasses = c(Allele='character'))
 imputes=read.delim('HN2.hla.txt',header=T,sep="")
 phenotypes=read.delim('PEANUT_ALLERGY.4PLINK.phen',sep="",header=T)
 phenotypes$Phenotype=ifelse(phenotypes$PEANUT_ALLERGY==2,'cases', 
              ifelse(phenotypes$PEANUT_ALLERGY==1,'controls', 'missing'))
+```
 
+```{r data summaries}
 head(rawdata)
 tail(rawdata)
 table(rawdata$Gene)
@@ -34,14 +41,60 @@ dat=dat[!dat$Phenotype=='missing',]
 
 Counts the number of cases and controls for each allele.
 Creates a matrix representation which can be used for regression modelling.
+Value is a list includes 'alleleVars' 'haplotypeCounts' 'modelData' 'dataMatrix'
 
 The input should be a data frame obtained by reading IMP1 or IMP2 imputation
 calls, with an extra column attached called "Phenotype" which takes two
 possible values: "cases" and "controls".
 
-```{r}
-hlaCounts(dat,callThreshold=0.7)
+```{r initiate data structure}
+counts=hlaCounts(dat,callThreshold=0.7)
 ```
 
+```{r create BIGDAWG compatible data structure}
+rd=dcast(dat, IndividualID + Phenotype ~ Gene + Chromosome, value.var = "Allele")
+rd$Phenotype=ifelse(rd$Phenotype == 'controls', 0,1)
+rd=as.data.frame(apply(rd, 2, function(y) gsub("(\\d\\d)(\\d\\d)", "\\1:\\2", y)))
+colnames(rd)=c("subjectID","Disease", rep(c("A","B","C","DPA1","DPB1","DQA1","DQB1","DRB1"),each=2))
+```
+
+initiate a BIGDAWG analysis
+```{r initiate a BIGDAWG analysis}
+library(BIGDAWG)
+write.table(rd,file='bigdawgtest.txt',sep='\t',row.names=F,col.names=T)
+BIGDAWG(Data="bigdawgtest.txt", HLA=T, All.Pairwise=T)
+```
+
+extract the haplotype counts
+```{r haplotype counts}
+hapCount=counts$haplotypeCounts
+
+#there are 'NAs'in the allele names. These are removed
+foo=grep('NA',hapCount$Allele)
+hapCount=hapCount[-foo,]
+```
+
+check concordance beetween allele frequnecy cases versus controls
+```{r allelefreq cases v controls}
+z.cols <- cut(as.numeric(hapCount$ANCESTRY), 3, labels = c("red", "blue", "forest green"))
+plot(hapCount$alleleFreq.cases,hapCount$alleleFreq.controls, cex=0.8,pch=19, xlab= 'allele frequency cases', ylab= 'allele frequency controls', main = 'Sanity Check', col = as.character(z.cols))
+legend(0,0.6, unique(hapCount$ANCESTRY),pch=19, col = as.character(unique(z.cols)))
+```
+
+
+simple barplot vizualisation
+```{r barplot freqs}
+repbarplot <- function(genes) {
+    hapcount1 <- hapCount[hapCount$Gene == genes,]
+    barplot(hapcount1[,5],col = "white", border ="blue",ylim=range(hapcount1[,4], hapcount1[,5]))
+    barplot(hapcount1[,4], col = "white", border = "red", add = TRUE,names.arg = hapcount1$Allele
+    ,cex.names=0.7, las=2,yaxt="n", main = print(unique(hapcount1$Gene)))
+    legend('topright',c('case','control'),pch=0,col=c('red', 'blue'))
+}
+
+par(mfrow = c(4, 2))
+par(mar = c(4, 2, 2, 4))
+sapply(unique(hapCount$Gene),function(x) repbarplot(x))
+```
 
 
