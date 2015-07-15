@@ -3,8 +3,7 @@ title: "hla_analysis"
 author: "David Martino"
 date: "2 July 2015"
 output: 
-  word_document: 
-    fig_height: 6
+  word_document
 ---
 
 **stage 1: preparation of data**
@@ -51,20 +50,6 @@ possible values: "cases" and "controls".
 counts=hlaCounts(dat,callThreshold=0.7)
 ```
 
-```{r create BIGDAWG compatible data structure}
-rd=dcast(dat, IndividualID + Phenotype ~ Gene + Chromosome, value.var = "Allele")
-rd$Phenotype=ifelse(rd$Phenotype == 'controls', 0,1)
-rd=as.data.frame(apply(rd, 2, function(y) gsub("(\\d\\d)(\\d\\d)", "\\1:\\2", y)))
-colnames(rd)=c("subjectID","Disease", rep(c("A","B","C","DPA1","DPB1","DQA1","DQB1","DRB1"),each=2))
-```
-
-initiate a BIGDAWG analysis
-```{r initiate a BIGDAWG analysis}
-library(BIGDAWG)
-write.table(rd,file='bigdawgtest.txt',sep='\t',row.names=F,col.names=T)
-BIGDAWG(Data="bigdawgtest.txt", HLA=T, All.Pairwise=T)
-```
-
 extract the haplotype counts
 ```{r haplotype counts}
 hapCount=counts$haplotypeCounts
@@ -75,7 +60,7 @@ hapCount=hapCount[-foo,]
 ```
 
 check concordance beetween allele frequnecy cases versus controls
-```{r allelefreq cases v controls}
+```{r allelefreq cases v controls, fig.width=5, fig.height=5}
 z.cols <- cut(as.numeric(hapCount$ANCESTRY), 3, labels = c("red", "blue", "forest green"))
 plot(hapCount$alleleFreq.cases,hapCount$alleleFreq.controls, cex=0.8,pch=19, xlab= 'allele frequency cases', ylab= 'allele frequency controls', main = 'Sanity Check', col = as.character(z.cols))
 legend(0,0.6, unique(hapCount$ANCESTRY),pch=19, col = as.character(unique(z.cols)))
@@ -83,7 +68,7 @@ legend(0,0.6, unique(hapCount$ANCESTRY),pch=19, col = as.character(unique(z.cols
 
 
 simple barplot vizualisation
-```{r barplot freqs}
+```{r barplot freqs, fig.width=7, fig.height=7}
 repbarplot <- function(genes) {
     hapcount1 <- hapCount[hapCount$Gene == genes,]
     barplot(hapcount1[,5],col = "white", border ="blue",ylim=range(hapcount1[,4], hapcount1[,5]))
@@ -97,4 +82,24 @@ par(mar = c(4, 2, 2, 4))
 sapply(unique(hapCount$Gene),function(x) repbarplot(x))
 ```
 
+Plot allele freq controls by ancestry
+```{r pop strat controls, fig.width=10, fig.height=10}
+library(ggplot2)
+ggplot(hapCount, aes(Allele, alleleFreq.controls, col=ANCESTRY)) + geom_point() + facet_wrap(~Gene, scale="free_y") + theme(axis.text.x=element_text(angle=45, hjust=1, size=5),legend.position="top")
+```
 
+
+```{r create BIGDAWG compatible data structure}
+rd=dcast(dat, IndividualID + Phenotype ~ Gene + Chromosome, value.var = "Allele")
+rd$Phenotype=ifelse(rd$Phenotype == 'controls', 0,1)
+rd=as.data.frame(apply(rd, 2, function(y) gsub("(\\d\\d)(\\d\\d)", "\\1:\\2", y)))
+colnames(rd)=c("subjectID","Disease", rep(c("A","B","C","DPA1","DPB1","DQA1","DQB1","DRB1"),each=2))
+```
+
+test for HWE
+```{r initiate a BIGDAWG analysis, include=TRUE}
+library(BIGDAWG)
+write.table(rd,file='bigdawgtest.txt',sep='\t',row.names=F,col.names=T)
+BIGDAWG(Data="bigdawgtest.txt", HLA=T, All.Pairwise=F,Run.Tests = "HWE")
+``` 
+ 
