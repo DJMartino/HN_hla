@@ -2,11 +2,9 @@
 title: "hla_analysis"
 author: "David Martino"
 date: "2 July 2015"
-output: 
-  word_document
+output: word_document
 ---
-
-**stage 1: preparation of data**
+###stage 1: preparation of data###
 
 ```{r load packages, include=FALSE}
 Sys.setenv(http_proxy="http://proxy1.ap.webscanningservice.com:3128") 
@@ -36,7 +34,7 @@ dat=merge(rawdata,phenotypes,by.x="IndividualID",by.y='IID')
 dat=dat[!dat$Phenotype=='missing',]
 ```
 
-**stage2: Summaries and data structures to represent HLA allele data.**
+###stage2: Summaries and data structures to represent HLA allele data.###
 
 Counts the number of cases and controls for each allele.
 Creates a matrix representation which can be used for regression modelling.
@@ -50,7 +48,7 @@ possible values: "cases" and "controls".
 counts=hlaCounts(dat,callThreshold=0.7)
 ```
 
-extract the haplotype counts
+####extract the haplotype counts####
 ```{r haplotype counts}
 hapCount=counts$haplotypeCounts
 
@@ -59,7 +57,7 @@ foo=grep('NA',hapCount$Allele)
 hapCount=hapCount[-foo,]
 ```
 
-check concordance beetween allele frequnecy cases versus controls
+####check concordance beetween allele frequnecy cases versus controls####
 ```{r allelefreq cases v controls, fig.width=5, fig.height=5}
 z.cols <- cut(as.numeric(hapCount$ANCESTRY), 3, labels = c("red", "blue", "forest green"))
 plot(hapCount$alleleFreq.cases,hapCount$alleleFreq.controls, cex=0.8,pch=19, xlab= 'allele frequency cases', ylab= 'allele frequency controls', main = 'Sanity Check', col = as.character(z.cols))
@@ -67,7 +65,7 @@ legend(0,0.6, unique(hapCount$ANCESTRY),pch=19, col = as.character(unique(z.cols
 ```
 
 
-simple barplot vizualisation
+####simple barplot vizualisation####
 ```{r barplot freqs, fig.width=7, fig.height=7}
 repbarplot <- function(genes) {
     hapcount1 <- hapCount[hapCount$Gene == genes,]
@@ -82,7 +80,7 @@ par(mar = c(4, 2, 2, 4))
 sapply(unique(hapCount$Gene),function(x) repbarplot(x))
 ```
 
-Plot allele freq controls by ancestry
+####Plot allele freq controls by ancestry####
 ```{r pop strat controls, fig.width=10, fig.height=10}
 library(ggplot2)
 ggplot(hapCount, aes(Allele, alleleFreq.controls, col=ANCESTRY)) + geom_point() + facet_wrap(~Gene, scale="free_y") + theme(axis.text.x=element_text(angle=45, hjust=1, size=5),legend.position="top")
@@ -96,10 +94,98 @@ rd=as.data.frame(apply(rd, 2, function(y) gsub("(\\d\\d)(\\d\\d)", "\\1:\\2", y)
 colnames(rd)=c("subjectID","Disease", rep(c("A","B","C","DPA1","DPB1","DQA1","DQB1","DRB1"),each=2))
 ```
 
-test for HWE
+####test for HWE####
 ```{r initiate a BIGDAWG analysis, include=TRUE}
 library(BIGDAWG)
 write.table(rd,file='bigdawgtest.txt',sep='\t',row.names=F,col.names=T)
 BIGDAWG(Data="bigdawgtest.txt", HLA=T, All.Pairwise=F,Run.Tests = "HWE")
 ``` 
  
+####create genotype matrix####
+```{r initiate haplo.stats matrix}
+library(haplo.stats)
+rd=dcast(dat, IndividualID + GENDER + ANCESTRY + Phenotype ~ Gene + Chromosome, value.var = "Allele")
+colnames(rd)[5:20]= gsub("_", ".a",colnames(rd)[5:20])
+```
+
+####filter to class II genes####
+```{r subset data}
+genotypes=rd[,c(11:20)]
+rownames(genotypes)=rd$IndividualID
+head(genotypes)
+label=sort(unique(dat$Gene))
+classII=as.character(label[-c(1:3)])
+head(genotypes)
+```
+
+###Estimating Haplotype Frequencies for class II genes###
+
+computes maximum likelihood estimates of haplotype probabilities. Posterior probabilities of haplotype pairs for each subject are also computed.Haplotype probabilities by group are also computed.
+```{r compute haplotype probs}
+save.em <- haplo.em(geno=genotypes, locus.label=classII, miss.val=c(0,NA),
+  control = haplo.em.control(n.try = 40, insert.batch.size=2))
+
+print(save.em,nlines=20)
+summary(save.em,show.haplo=TRUE,nlines=20)
+```
+
+####Compute haplotype frequencies according to each level of grouping variable.#####
+```{r compute group frequencies}
+y.bin <- 1*(rd$Phenotype=="cases")
+group.bin <- haplo.group(y.bin, genotypes, locus.label=as.character(classII), miss.val=0)
+print(group.bin, nlines=10)
+```
+
+###test assocaition between haplotypes and phenotype using EM method of Schaid et al###
+
+Hapltype effects modelled as 'additive' adjusting for gender and ancestry
+p-values computed by permutation of traits and covariates.
+Computes the maximum likelihood estimates of the haplotype frequencies and the posterior probabilities of the pairs of haplotypes for each subject using an EM algorithm. The algorithm begins with haplotypes from a subset of the loci and progressively discards those with low frequency before inserting more loci. The process is repeated until haplotypes for all loci are established. The posterior probabilities are used to compute the score statistics for the association of (ambiguous) haplotypes with traits. 
+
+```{r initiate EM algorithm}
+x.ma <- cbind(rd$ANCESTRY, rd$GENDER)
+  score.bin <- haplo.score(y.bin, genotypes, trait.type="binomial",
+  x.adj = x.ma, skip.haplo = 0.01,haplo.effect="additive",miss.val=0,
+  locus.label=as.character(classII),simulate=TRUE,
+  sim.control=score.sim.control(min.sim=200,max.sim=500,verbose=F))
+
+print.haplo.score(score.bin, nlines=20)
+```
+
+####merge stats with haplo freq by group####
+```{r merge stats with freqs}
+merge.bin <- haplo.score.merge(score.bin, group.bin)
+print.haplo.score.merge(merge.bin,order.by='p.val')
+```
+
+
+###Binomial regression models###
+```{r binomial regression, warning=FALSE}
+geno.glm <- setupGeno(genotypes, miss.val=c(0,NA), locus.label=classII)
+glm.data <- data.frame(geno.glm, ancestry=rd$ANCESTRY, gender=rd$GENDER, y.bin=y.bin)
+
+#weight cases to pop prevalence of 3%
+weights= ifelse(y.bin==1,0.03,1)
+
+fit.bin <- haplo.glm(y.bin ~ ancestry + gender + geno.glm, family = binomial,
+ data=glm.data, na.action = "na.geno.keep",
+ locus.label=classII,weights=NULL,
+ control = haplo.glm.control(haplo.effect='additive',haplo.freq.min = .01))
+
+summary(fit.bin)
+```
+
+####plot residuls from model fit####
+```{r model diagnostics , fig.width=5, fig.height=5}
+plot(residuals.haplo.glm(fit.bin))
+```
+
+
+###Case control analysis unadjusted###
+```{r case control, warning=FALSE}
+cc.hla <- haplo.cc(y=y.bin, geno=genotypes, locus.label = classII,
+ control=haplo.glm.control(haplo.freq.min=.01))
+print(cc.hla, nlines=20, digits=2)
+```
+
+
