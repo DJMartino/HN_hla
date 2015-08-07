@@ -1,8 +1,8 @@
 ---
 title: "hla_analysis"
 author: "David Martino"
-date: "2 July 2015"
-output: word_document
+date: "27 July 2015"
+output: html_document
 ---
 ###stage 1: preparation of data###
 
@@ -11,7 +11,7 @@ Sys.setenv(http_proxy="http://proxy1.ap.webscanningservice.com:3128")
 library(reshape2)
 library(plyr)
 source('hlaAnalysis_ancestry.R')
-setwd("/Users/david/Documents/projects/healthnuts/hla/imputationData/imp2.v2/HN_hla")
+setwd("/Users/david/Documents/projects/healthnuts/hla/imputationData/imp2.v2/HN_hla/data")
 ```
 
 ```{r read in data, include=FALSE}
@@ -23,11 +23,6 @@ phenotypes$Phenotype=ifelse(phenotypes$PEANUT_ALLERGY==2,'cases',
 ```
 
 ```{r data summaries}
-head(rawdata)
-tail(rawdata)
-table(rawdata$Gene)
-table(rawdata$Chromosome)
-summary(rawdata$Posterior)
 table(phenotypes$Phenotype,phenotypes$ANCESTRY)
 
 dat=merge(rawdata,phenotypes,by.x="IndividualID",by.y='IID')
@@ -61,16 +56,15 @@ hapCount=hapCount[-foo,]
 ```{r allelefreq cases v controls, fig.width=5, fig.height=5}
 z.cols <- cut(as.numeric(hapCount$ANCESTRY), 3, labels = c("red", "blue", "forest green"))
 plot(hapCount$alleleFreq.cases,hapCount$alleleFreq.controls, cex=0.8,pch=19, xlab= 'allele frequency cases', ylab= 'allele frequency controls', main = 'Sanity Check', col = as.character(z.cols))
-legend(0,0.6, unique(hapCount$ANCESTRY),pch=19, col = as.character(unique(z.cols)))
+legend(0,0.4, unique(hapCount$ANCESTRY),pch=19, col = as.character(unique(z.cols)))
 ```
 
-
 ####simple barplot vizualisation####
-```{r barplot freqs, fig.width=7, fig.height=7}
+```{r barplot freqs, fig.width=7, fig.height=7, results='hide'}
 repbarplot <- function(genes) {
     hapcount1 <- hapCount[hapCount$Gene == genes,]
-    barplot(hapcount1[,5],col = "white", border ="blue",ylim=range(hapcount1[,4], hapcount1[,5]))
-    barplot(hapcount1[,4], col = "white", border = "red", add = TRUE,names.arg = hapcount1$Allele
+    barplot(hapcount1[,6],col = "white", border ="blue",ylim=range(hapcount1[,5], hapcount1[,6]))
+    barplot(hapcount1[,5], col = "white", border = "red", add = TRUE,names.arg = hapcount1$Allele
     ,cex.names=0.7, las=2,yaxt="n", main = print(unique(hapcount1$Gene)))
     legend('topright',c('case','control'),pch=0,col=c('red', 'blue'))
 }
@@ -86,7 +80,6 @@ library(ggplot2)
 ggplot(hapCount, aes(Allele, alleleFreq.controls, col=ANCESTRY)) + geom_point() + facet_wrap(~Gene, scale="free_y") + theme(axis.text.x=element_text(angle=45, hjust=1, size=5),legend.position="top")
 ```
 
-
 ```{r create BIGDAWG compatible data structure}
 rd=dcast(dat, IndividualID + Phenotype ~ Gene + Chromosome, value.var = "Allele")
 rd$Phenotype=ifelse(rd$Phenotype == 'controls', 0,1)
@@ -100,29 +93,76 @@ library(BIGDAWG)
 write.table(rd,file='bigdawgtest.txt',sep='\t',row.names=F,col.names=T)
 BIGDAWG(Data="bigdawgtest.txt", HLA=T, All.Pairwise=F,Run.Tests = "HWE")
 ``` 
- 
+
 ####create genotype matrix####
+
+set allele posteriors to zero if less than 0.7
+
 ```{r initiate haplo.stats matrix}
 library(haplo.stats)
+dat$Allele=ifelse(dat$Posterior < 0.7, 0, dat$Allele)
 rd=dcast(dat, IndividualID + GENDER + ANCESTRY + Phenotype ~ Gene + Chromosome, value.var = "Allele")
 colnames(rd)[5:20]= gsub("_", ".a",colnames(rd)[5:20])
+head(rd)
 ```
+
+###Global haplotype score sliding###
+Identify subhaplotypes from a group of loci using association testing
+```{r}
+y.bin <- 1*(rd$Phenotype=="cases")
+
+x.ma <- cbind(rd$ANCESTRY, rd$GENDER)
+
+genotypes=rd[,-c(1:4)]
+rownames(genotypes)=rd$IndividualID
+label=sort(unique(dat$Gene))
+
+score.slide.bin <- haplo.score.slide(y.bin, genotypes, trait.type="binomial",
+  x.adj = x.ma, skip.haplo = 0.01,haplo.effect="additive",miss.val=0,
+  locus.label=label,simulate=TRUE,
+  sim.control=score.sim.control(min.sim=200,max.sim=500,verbose=F))
+ 
+plot.haplo.score.slide(score.slide.bin)
+```
+
+####trend test####
+```{r}
+tt=trendTest.hlaAnalysis(counts)
+tt[tt$p.trend<0.05,]
+foo=which(tt[,2]<0.05)
+tt.up=tt[foo,]
+tt.up
+```
+
+trendTestSingle('DPB1.0301',counts)
 
 ####filter to class II genes####
 ```{r subset data}
 genotypes=rd[,c(11:20)]
 rownames(genotypes)=rd$IndividualID
-head(genotypes)
 label=sort(unique(dat$Gene))
 classII=as.character(label[-c(1:3)])
 head(genotypes)
 ```
 
-###Estimating Haplotype Frequencies for class II genes###
+####Compute the number of loci with 0,1 or 2 missing alleles and count the number of potential haplotype pairs that are consistent with the observed data. Remove missingness.####
+```{r}
+###Preview missing data###
+geno.desc <- summaryGeno(genotypes, miss.val=c(0,NA))
+
+#Sum of missing alleles per individual
+miss.all <- which(geno.desc[,4] > 100000)
+geno.updated <- genotypes[-miss.all,]
+```
+
+###Haplotype frequency estimation###
 
 computes maximum likelihood estimates of haplotype probabilities. Posterior probabilities of haplotype pairs for each subject are also computed.Haplotype probabilities by group are also computed.
 ```{r compute haplotype probs}
-save.em <- haplo.em(geno=genotypes, locus.label=classII, miss.val=c(0,NA),
+seed <- c(17, 53, 1, 40, 37, 0, 62, 56, 5, 52, 12, 1)
+set.seed(seed)
+
+save.em <- haplo.em(geno=geno.updated, locus.label=classII, miss.val=c(NA),
   control = haplo.em.control(n.try = 40, insert.batch.size=2))
 
 print(save.em,nlines=20)
@@ -131,8 +171,8 @@ summary(save.em,show.haplo=TRUE,nlines=20)
 
 ####Compute haplotype frequencies according to each level of grouping variable.#####
 ```{r compute group frequencies}
-y.bin <- 1*(rd$Phenotype=="cases")
-group.bin <- haplo.group(y.bin, genotypes, locus.label=as.character(classII), miss.val=0)
+y.bin = y.bin[-miss.all]
+group.bin <- haplo.group(y.bin, geno.updated, locus.label=as.character(classII), miss.val=0)
 print(group.bin, nlines=10)
 ```
 
@@ -144,7 +184,8 @@ Computes the maximum likelihood estimates of the haplotype frequencies and the p
 
 ```{r initiate EM algorithm}
 x.ma <- cbind(rd$ANCESTRY, rd$GENDER)
-  score.bin <- haplo.score(y.bin, genotypes, trait.type="binomial",
+x.ma=x.ma[-miss.all,]
+  score.bin <- haplo.score(y.bin, geno.updated, trait.type="binomial",
   x.adj = x.ma, skip.haplo = 0.01,haplo.effect="additive",miss.val=0,
   locus.label=as.character(classII),simulate=TRUE,
   sim.control=score.sim.control(min.sim=200,max.sim=500,verbose=F))
@@ -158,34 +199,62 @@ merge.bin <- haplo.score.merge(score.bin, group.bin)
 print.haplo.score.merge(merge.bin,order.by='p.val')
 ```
 
+###Case control analysis unadjusted###
+```{r case control, warning=FALSE}
+cc.hla <- haplo.cc(y=y.bin, geno=geno.updated, locus.label = classII,
+ control=haplo.glm.control(haplo.freq.min=.01))
+print(cc.hla, nlines=20, digits=2)
+```
+
 
 ###Binomial regression models###
 ```{r binomial regression, warning=FALSE}
-geno.glm <- setupGeno(genotypes, miss.val=c(0,NA), locus.label=classII)
-glm.data <- data.frame(geno.glm, ancestry=rd$ANCESTRY, gender=rd$GENDER, y.bin=y.bin)
+geno.glm <- setupGeno(geno.updated, miss.val=c(0,NA), locus.label=classII)
+glm.data <- data.frame(geno.glm, ancestry=rd$ANCESTRY[-miss.all], gender=rd$GENDER[-miss.all], y.bin=y.bin)
 
 #weight cases to pop prevalence of 3%
 weights= ifelse(y.bin==1,0.03,1)
 
 fit.bin <- haplo.glm(y.bin ~ ancestry + gender + geno.glm, family = binomial,
  data=glm.data, na.action = "na.geno.keep",
- locus.label=classII,weights=NULL,
+ locus.label=classII,weights=weights,
  control = haplo.glm.control(haplo.effect='additive',haplo.freq.min = .01))
 
 summary(fit.bin)
 ```
 
-####plot residuls from model fit####
-```{r model diagnostics , fig.width=5, fig.height=5}
-plot(residuals.haplo.glm(fit.bin))
-```
 
 
-###Case control analysis unadjusted###
-```{r case control, warning=FALSE}
-cc.hla <- haplo.cc(y=y.bin, geno=genotypes, locus.label = classII,
- control=haplo.glm.control(haplo.freq.min=.01))
-print(cc.hla, nlines=20, digits=2)
-```
+add1(glm(as.factor(Phenotype) ~ 1, data=counts$modelData, family = "binomial"), ~ A.0101 + DRB1.1303, test = "LRT")
 
+#But this will drop anyone with NA's
+
+#need to debug hlaanalysis and run it on the counts object, then use the lrTest functions
+
+Single term additions
+
+Model:
+as.factor(Phenotype) ~ 1
+          Df Deviance    AIC       LRT Pr(>Chi)
+<none>         191.88 282.41                   
+A.0101     1   191.88 284.40 0.0026014   0.9593
+DRB1.1303  0   191.88 282.41 0.0000000         
+Warning message:
+In add1.glm(glm(as.factor(Phenotype) ~ 1, data = counts$modelData,  :
+  using the 153/221 rows from a combined fit
+> add1(glm(as.factor(Phenotype) ~ 1, data=counts$modelData, family = "binomial"), ~ ., test = "LRT")
+Error in add1.glm(glm(as.factor(Phenotype) ~ 1, data = counts$modelData,  : 
+  no terms in scope for adding to object
+> add1(glm(as.factor(Phenotype) ~ 1, data=counts$modelData, family = "binomial"), ~ A.0101 + DRB1.1303, test = "LRT")
+Single term additions
+
+Model:
+as.factor(Phenotype) ~ 1
+          Df Deviance    AIC       LRT Pr(>Chi)
+<none>         191.88 282.41                   
+A.0101     1   191.88 284.40 0.0026014   0.9593
+DRB1.1303  0   191.88 282.41 0.0000000         
+Warning message:
+In add1.glm(glm(as.factor(Phenotype) ~ 1, data = counts$modelData,  :
+  using the 153/221 rows from a combined fit
 
