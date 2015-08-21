@@ -10,7 +10,7 @@ output: html_document
 Sys.setenv(http_proxy="http://proxy1.ap.webscanningservice.com:3128") 
 library(reshape2)
 library(plyr)
-source('hlaAnalysis_ancestry.R')
+source('/Users/david/Documents/projects/healthnuts/hla/imputationData/imp2.v2/HN_hla/hlaAnalysis_ancestry.R')
 setwd("/Users/david/Documents/projects/healthnuts/hla/imputationData/imp2.v2/HN_hla/data")
 ```
 
@@ -23,10 +23,11 @@ phenotypes$Phenotype=ifelse(phenotypes$PEANUT_ALLERGY==2,'cases',
 ```
 
 ```{r data summaries}
-table(phenotypes$Phenotype,phenotypes$ANCESTRY)
-
 dat=merge(rawdata,phenotypes,by.x="IndividualID",by.y='IID')
 dat=dat[!dat$Phenotype=='missing',]
+dat$ANCESTRY=as.factor(as.character(dat$ANCESTRY))
+
+table(dat$Phenotype,dat$ANCESTRY)
 ```
 
 ###stage2: Summaries and data structures to represent HLA allele data.###
@@ -47,24 +48,29 @@ counts=hlaCounts(dat,callThreshold=0.7)
 ```{r haplotype counts}
 hapCount=counts$haplotypeCounts
 
-#there are 'NAs'in the allele names. These are removed
+#Filter to remove alleles with low confidence calls (below threshold). 
 foo=grep('NA',hapCount$Allele)
 hapCount=hapCount[-foo,]
+
 ```
 
 ####check concordance beetween allele frequnecy cases versus controls####
 ```{r allelefreq cases v controls, fig.width=5, fig.height=5}
+library(car)
 z.cols <- cut(as.numeric(hapCount$ANCESTRY), 3, labels = c("red", "blue", "forest green"))
 plot(hapCount$alleleFreq.cases,hapCount$alleleFreq.controls, cex=0.8,pch=19, xlab= 'allele frequency cases', ylab= 'allele frequency controls', main = 'Sanity Check', col = as.character(z.cols))
-legend(0,0.4, unique(hapCount$ANCESTRY),pch=19, col = as.character(unique(z.cols)))
+legend(0,0.8, unique(hapCount$ANCESTRY),pch=19, col = as.character(unique(z.cols)))
+with(hapCount, dataEllipse(hapCount$alleleFreq.cases, hapCount$alleleFreq.controls, ANCESTRY, level=0.95, fill=TRUE, fill.alpha=0.1, plot.points=FALSE, add=TRUE,col=levels(z.cols), center.pch="+"))
+coord=c(36, 230, 235, 242, 243, 284, 286, 332, 351)
+with(hapCount[coord,],text(alleleFreq.cases,alleleFreq.controls,Allele, cex=0.8))
 ```
 
 ####simple barplot vizualisation####
 ```{r barplot freqs, fig.width=7, fig.height=7, results='hide'}
 repbarplot <- function(genes) {
     hapcount1 <- hapCount[hapCount$Gene == genes,]
-    barplot(hapcount1[,6],col = "white", border ="blue",ylim=range(hapcount1[,5], hapcount1[,6]))
-    barplot(hapcount1[,5], col = "white", border = "red", add = TRUE,names.arg = hapcount1$Allele
+    barplot(hapcount1[,8],col = "white", border ="blue",ylim=range(hapcount1[,8], hapcount1[,7]))
+    barplot(hapcount1[,7], col = "white", border = "red", add = TRUE,names.arg = hapcount1$Allele
     ,cex.names=0.7, las=2,yaxt="n", main = print(unique(hapcount1$Gene)))
     legend('topright',c('case','control'),pch=0,col=c('red', 'blue'))
 }
@@ -80,27 +86,46 @@ library(ggplot2)
 ggplot(hapCount, aes(Allele, alleleFreq.controls, col=ANCESTRY)) + geom_point() + facet_wrap(~Gene, scale="free_y") + theme(axis.text.x=element_text(angle=45, hjust=1, size=5),legend.position="top")
 ```
 
-```{r create BIGDAWG compatible data structure}
-rd=dcast(dat, IndividualID + Phenotype ~ Gene + Chromosome, value.var = "Allele")
-rd$Phenotype=ifelse(rd$Phenotype == 'controls', 0,1)
-rd=as.data.frame(apply(rd, 2, function(y) gsub("(\\d\\d)(\\d\\d)", "\\1:\\2", y)))
-colnames(rd)=c("subjectID","Disease", rep(c("A","B","C","DPA1","DPB1","DQA1","DQB1","DRB1"),each=2))
+```{r create BIGDAWG compatible data structure, include=FALSE}
+asians=subset(dat, ANCESTRY=="Asian")
+europeans=subset(dat, ANCESTRY=="European")
+admixed=subset(dat, ANCESTRY=="MixedEuropeanAsian")
+
+rda=dcast(asians, IndividualID + Phenotype ~ Gene + Chromosome, value.var = "Allele")
+rda$Phenotype=ifelse(rda$Phenotype == 'controls', 0,1)
+rda=as.data.frame(apply(rda, 2, function(y) gsub("(\\d\\d)(\\d\\d)", "\\1:\\2", y)))
+colnames(rda)=c("subjectID","Disease", rep(c("A","B","C","DPA1","DPB1","DQA1","DQB1","DRB1"),each=2))
+
+rde=dcast(europeans, IndividualID + Phenotype ~ Gene + Chromosome, value.var = "Allele")
+rde$Phenotype=ifelse(rde$Phenotype == 'controls', 0,1)
+rde=as.data.frame(apply(rde, 2, function(y) gsub("(\\d\\d)(\\d\\d)", "\\1:\\2", y)))
+colnames(rde)=c("subjectID","Disease", rep(c("A","B","C","DPA1","DPB1","DQA1","DQB1","DRB1"),each=2))
+
+rdm=dcast(admixed, IndividualID + Phenotype ~ Gene + Chromosome, value.var = "Allele")
+rdm$Phenotype=ifelse(rdm$Phenotype == 'controls', 0,1)
+rdm=as.data.frame(apply(rdm, 2, function(y) gsub("(\\d\\d)(\\d\\d)", "\\1:\\2", y)))
+colnames(rdm)=c("subjectID","Disease", rep(c("A","B","C","DPA1","DPB1","DQA1","DQB1","DRB1"),each=2))
+
 ```
 
 ####test for HWE####
 ```{r initiate a BIGDAWG analysis, include=TRUE}
 library(BIGDAWG)
-write.table(rd,file='bigdawgtest.txt',sep='\t',row.names=F,col.names=T)
-BIGDAWG(Data="bigdawgtest.txt", HLA=T, All.Pairwise=F,Run.Tests = "HWE")
+write.table(rda,file='bigdawgtest_asians.txt',sep='\t',row.names=F,col.names=T)
+write.table(rde,file='bigdawgtest_europeans.txt',sep='\t',row.names=F,col.names=T)
+write.table(rdm,file='bigdawgtest_admixed.txt',sep='\t',row.names=F,col.names=T)
+BIGDAWG(Data="bigdawgtest_asians.txt", HLA=T, All.Pairwise=F,Run.Tests = "HWE")
+BIGDAWG(Data="bigdawgtest_europeans.txt", HLA=T, All.Pairwise=F,Run.Tests = "HWE")
+BIGDAWG(Data="bigdawgtest_admixed.txt", HLA=T, All.Pairwise=F,Run.Tests = "HWE")
 ``` 
 
 ####create genotype matrix####
 
-set allele posteriors to zero if less than 0.7
+#set allele posteriors to zero if less than 0.7
 
 ```{r initiate haplo.stats matrix}
 library(haplo.stats)
-dat$Allele=ifelse(dat$Posterior < 0.7, 0, dat$Allele)
+#dat$Allele=ifelse(dat$Posterior < 0.7, 0, dat$Allele)
 rd=dcast(dat, IndividualID + GENDER + ANCESTRY + Phenotype ~ Gene + Chromosome, value.var = "Allele")
 colnames(rd)[5:20]= gsub("_", ".a",colnames(rd)[5:20])
 head(rd)
@@ -115,7 +140,9 @@ x.ma <- cbind(rd$ANCESTRY, rd$GENDER)
 
 genotypes=rd[,-c(1:4)]
 rownames(genotypes)=rd$IndividualID
-label=sort(unique(dat$Gene))
+genotypes=genotypes[,c(1,2,5,6,3,4,15,16,11,12,13,14,7,8,9,10)]
+
+label=c("A","C","B","DRB1","DQA1","DQB1","DPA1","DPB1")
 
 score.slide.bin <- haplo.score.slide(y.bin, genotypes, trait.type="binomial",
   x.adj = x.ma, skip.haplo = 0.01,haplo.effect="additive",miss.val=0,
@@ -223,39 +250,84 @@ fit.bin <- haplo.glm(y.bin ~ ancestry + gender + geno.glm, family = binomial,
 summary(fit.bin)
 ```
 
+dat=merge(rawdata,phenotypes,by.x="IndividualID",by.y='IID')
+dat=dat[!dat$Phenotype=='missing',]
+dat$ANCESTRY=as.factor(as.character(dat$ANCESTRY))
+
+haplotypeCounts <- dcast(melt(dat, measure.vars = "Posterior"),
+                    Gene + Allele ~ Phenotype,
+                    length)
+                    
+haplotypeCounts <- transform(haplotypeCounts, total = cases + controls)
+
+colnames(haplotypeCounts)[3:5] <- paste0("numHap.",colnames(haplotypeCounts)[3:5])
+
+res <- ddply(haplotypeCounts, .(Gene),
+                 mutate,
+                 alleleFreq.controls = numHap.controls / sum(numHap.controls),
+                 alleleFreq.cases    = numHap.cases    / sum(numHap.cases   ),
+                 alleleFreq.total    = numHap.total    / sum(numHap.total   ))
 
 
-add1(glm(as.factor(Phenotype) ~ 1, data=counts$modelData, family = "binomial"), ~ A.0101 + DRB1.1303, test = "LRT")
+#Filter to remove alleles with less than 1% representation in the population. 
+toremove=res$alleleFreq.total<0.01
+hapCount=res[toremove=='FALSE',]
 
-#But this will drop anyone with NA's
+hapCount$Allele<-paste(hapCount$Gene, hapCount$Allele, sep = ".")
 
-#need to debug hlaanalysis and run it on the counts object, then use the lrTest functions
+##Names of Alleles to analyse###
+alleles.hf=hapCount$Allele
 
-Single term additions
+# Names of all of the genes in the dataset.
+genes <- sort(unique(dat$Gene))
 
-Model:
-as.factor(Phenotype) ~ 1
-          Df Deviance    AIC       LRT Pr(>Chi)
-<none>         191.88 282.41                   
-A.0101     1   191.88 284.40 0.0026014   0.9593
-DRB1.1303  0   191.88 282.41 0.0000000         
-Warning message:
-In add1.glm(glm(as.factor(Phenotype) ~ 1, data = counts$modelData,  :
-  using the 153/221 rows from a combined fit
-> add1(glm(as.factor(Phenotype) ~ 1, data=counts$modelData, family = "binomial"), ~ ., test = "LRT")
-Error in add1.glm(glm(as.factor(Phenotype) ~ 1, data = counts$modelData,  : 
-  no terms in scope for adding to object
-> add1(glm(as.factor(Phenotype) ~ 1, data=counts$modelData, family = "binomial"), ~ A.0101 + DRB1.1303, test = "LRT")
-Single term additions
+# Combine gene and allele names.
+dat$G.Allele <- paste(dat$Gene, dat$Allele, sep = ".")
 
-Model:
-as.factor(Phenotype) ~ 1
-          Df Deviance    AIC       LRT Pr(>Chi)
-<none>         191.88 282.41                   
-A.0101     1   191.88 284.40 0.0026014   0.9593
-DRB1.1303  0   191.88 282.41 0.0000000         
-Warning message:
-In add1.glm(glm(as.factor(Phenotype) ~ 1, data = counts$modelData,  :
-  using the 153/221 rows from a combined fit
+# Complie data set.
+dataMatrix <- dcast(melt(dat, measure.vars = "Posterior"),
+                       IndividualID + ANCESTRY +GENDER + Phenotype ~ G.Allele,
+                       length)
 
-any new
+df=as.data.frame(dataMatrix[,-(1:4)])
+foo=colnames(df)%in%alleles.hf
+keep=df[,which(colnames(df)%in%alleles.hf)]
+modelData=cbind(dataMatrix[,c(1:4)],keep)
+
+#Define response
+pheno=as.factor(modelData$Phenotype)
+
+#Define the genes to test
+genes=sort(unique(dat$Gene))
+
+#Container for the result
+result <- vector("list")
+
+#Fit logistic regression model over each gene
+for (gene in genes) {
+  allVars         <-  grep(paste0(gene,"."), names(modelData),fixed=TRUE)
+  df              <-  modelData[, c(2,3,allVars)]
+  fit.all[[gene]] <-  glm(pheno~., df,family = "binomial")
+  result[[gene]]  <- summary(fit.all[[gene]])
+}
+
+result  
+
+fit.glm0 <-  glm(as.factor(Phenotype)~1,data = modelData, family='binomial')
+fit.glm1 <-  glm(as.factor(Phenotype)~ANCESTRY+GENDER,data = modelData, family='binomial')
+fit.glm2 <-  glm(as.factor(Phenotype)~ANCESTRY+GENDER+DQB1.0202, data = modelData, family='binomial')
+
+anova(fit.glm0,fit.glm1,fit.glm2,test="Chisq")
+
+# OR estimate and Wald test p-value.
+ m.fit <- coef(summary(fit.glm2))[, -3, drop = FALSE]
+colnames(m.fit) <- c("logOR", "se.logOR", "p.wald")
+
+# 95% CI for the OR.
+ci <- exp(confint.default(fit.glm2))
+
+#package up
+table=cbind(m.fit,ci)
+
+#print to screen
+table
