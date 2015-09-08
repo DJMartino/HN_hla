@@ -10,7 +10,6 @@ output: html_document
 Sys.setenv(http_proxy="http://proxy1.ap.webscanningservice.com:3128") 
 library(reshape2)
 library(plyr)
-source('/Users/david/Documents/projects/healthnuts/hla/imputationData/imp2.v2/HN_hla/hlaAnalysis_ancestry.R')
 setwd("/Users/david/Documents/projects/healthnuts/hla/imputationData/imp2.v2/HN_hla/data")
 ```
 
@@ -30,10 +29,224 @@ dat$ANCESTRY=as.factor(as.character(dat$ANCESTRY))
 table(dat$Phenotype,dat$ANCESTRY)
 ```
 
-###stage2: Summaries and data structures to represent HLA allele data.###
-
+### Summaries and data structures to represent HLA allele data.###
+#to be eliminated??????
 Counts the number of cases and controls for each allele.
 Creates a matrix representation which can be used for regression modelling.
+```{r initiate data structure}
+source('/Users/david/Documents/projects/healthnuts/hla/imputationData/imp2.v2/HN_hla/hlaAnalysis.R')
+counts=hlaCounts(dat,callThreshold=0.7)
+```
+
+####extract the haplotype counts####
+```{r haplotype counts}
+hapCount=counts$haplotypeCounts
+
+#Filter to remove alleles with low confidence calls (below threshold). 
+foo=grep('NA',hapCount$Allele)
+hapCount=hapCount[-foo,]
+```
+
+
+###QC filtering to remove alleles with less than 1% representation in the population
+```{r}
+toremove=hapCount$alleleFreq.total<0.01
+hapCount=hapCount[toremove=='FALSE',]
+
+#Names of Alleles to analyse
+alleles.hf=hapCount$Allele
+
+# Names of all of the genes in the dataset.
+genes <- sort(unique(dat$Gene))
+
+# Combine gene and allele names.
+dat$G.Allele <- paste(dat$Gene, dat$Allele, sep = ".")
+```
+
+###plot of hapCount freq in population
+```{r}
+plot(as.factor(hapCount$Allele),hapCount$alleleFreq.cases, xaxt="n",main='Allele Frequency cases v controls')
+with(hapCount,text(as.factor(Allele),alleleFreq.cases,Allele, cex=0.6,col='red'))
+points(as.factor(hapCount$Allele),hapCount$alleleFreq.controls, xaxt="n")
+with(hapCount,text(as.factor(Allele),alleleFreq.controls,Allele, cex=0.6,col='blue'))
+```
+
+####filter out low posterior calls####
+```{r}
+toremove=dat$Posterior<0.7
+dat.2=dat[toremove==FALSE,]
+```
+
+####Compile model data set for statistics####
+```{r}
+dataMatrix <- dcast(melt(dat.2, measure.vars = "Posterior"),
+                       IndividualID + ANCESTRY +GENDER + Phenotype ~ G.Allele,
+                       length)
+```
+
+####Filter out low frequency alleles####
+```{r}
+df=as.data.frame(dataMatrix[,-(1:4)])
+foo=colnames(df)%in%alleles.hf
+keep=df[,which(colnames(df)%in%alleles.hf)]
+modelData=cbind(dataMatrix[,c(1:4)],keep)
+```
+
+####Regression analysis####
+```{r, logistic regression}
+#Define response
+pheno=ifelse(modelData$Phenotype == 'controls', 0,1)
+
+fit.glm0 <-  glm(pheno~0,data = modelData, family='binomial')
+fit.glm1 <-  glm(pheno~ANCESTRY+GENDER,data = modelData, family='binomial')
+fit.glm2 <-  glm(pheno~ANCESTRY+GENDER+DQA1.0102, data = modelData, family='binomial')
+fit.glm3 <-  glm(pheno~ANCESTRY+GENDER+DRB1.1501, data = modelData, family='binomial')
+fit.glm4 <-  glm(pheno~ANCESTRY+GENDER+DQB1.0604, data = modelData, family='binomial')
+
+anova(fit.glm0,fit.glm1,fit.glm2,fit.glm3,fit.glm4,test="LRT")
+```
+
+####Model vis####
+```{r, DQA1.0102 visualise the model fit}
+library(visreg)
+par(mfrow=c(2,3))
+visreg(fit.glm2, ylab = "log odds (Food Allergy)")
+```
+
+####Statistics####
+```{r, for DQA1.0102 extract the odds ratios and statistics}
+# OR estimate 
+m.fit.or <- exp(coef(summary(fit.glm2))[, 1])
+
+# p-val and se estimate
+m.fit.p <- coef(summary(fit.glm2))[, c(2,4)]
+
+#combine them
+m.fit=cbind(m.fit.or,m.fit.p)
+colnames(m.fit) <- c("OR", "se.OR", "p.wald")
+
+# 95% CI for the OR.
+ci <- exp(confint.default(fit.glm2))
+
+#package up
+table=cbind(m.fit,ci)
+
+#print to screen
+table
+```
+
+####Stratified analysis####
+```{r, for DQA1.0102 stratified analysis}
+glm2.strat <-  glm(pheno~GENDER+DQA1.0102*ANCESTRY, data = modelData, family='binomial')
+visreg(glm2.strat, "DQA1.0102", by = "ANCESTRY",ylab = "log odds (Food Allergy)")
+```
+
+```{r, statistics for stratified analysis}
+glm.AS <-  glm(pheno~GENDER+DQA1.0102, data = modelData, family='binomial', subset=ANCESTRY=='Asian')
+glm.EU <-  glm(pheno~GENDER+DQA1.0102, data = modelData, family='binomial', subset=ANCESTRY=='European')
+glm.EA <-  glm(pheno~GENDER+DQA1.0102, data = modelData, family='binomial', subset=ANCESTRY=='MixedEuropeanAsian')
+
+# OR estimate 
+m.fit.AS <- exp(coef(summary(glm.AS))[, 1])
+m.fit.EU <- exp(coef(summary(glm.EU))[, 1])
+m.fit.EA <- exp(coef(summary(glm.EA))[, 1])
+
+# p-val and se estimate
+m.fit.pAS <- coef(summary(glm.AS))[, c(2,4)]
+m.fit.pEU <- coef(summary(glm.EU))[, c(2,4)]
+m.fit.pEA <- coef(summary(glm.EA))[, c(2,4)]
+
+# 95% CI for the OR.
+ci.AS <- exp(confint.default(glm.AS))
+ci.EU <- exp(confint.default(glm.EU))
+ci.EA <- exp(confint.default(glm.EA))
+
+#combine them
+stat.fit.AS=cbind(m.fit.AS,m.fit.pAS,ci.AS)
+colnames(stat.fit.AS) <- c("OR", "se.OR", "p.wald","2.5%","97.5%")
+stat.fit.EU=cbind(m.fit.EU,m.fit.pEU,ci.EU)
+colnames(stat.fit.EU) <- c("OR", "se.OR", "p.wald","2.5%","97.5%")
+stat.fit.EA=cbind(m.fit.EA,m.fit.pEU,ci.EA)
+colnames(stat.fit.EA) <- c("OR", "se.OR", "p.wald","2.5%","97.5%")
+
+#package up
+table=list(Asian=stat.fit.AS,European=stat.fit.EU,Admixed=stat.fit.EA)
+
+#print to screen
+table
+```
+
+####Model vis####
+```{r, DRB1.1501 visualise the model fit}
+library(visreg)
+par(mfrow=c(2,3))
+visreg(fit.glm3, ylab = "log odds (Food Allergy)")
+```
+
+####Statistics####
+```{r, for DRB1.1501 extract the odds ratios and statistics}
+# OR estimate 
+m.fit.or <- exp(coef(summary(fit.glm3))[, 1])
+
+# p-val and se estimate
+m.fit.p <- coef(summary(fit.glm3))[, c(2,4)]
+
+#combine them
+m.fit=cbind(m.fit.or,m.fit.p)
+colnames(m.fit) <- c("OR", "se.OR", "p.wald")
+
+# 95% CI for the OR.
+ci <- exp(confint.default(fit.glm3))
+
+#package up
+table=cbind(m.fit,ci)
+
+#print to screen
+table
+```
+
+####Stratified analysis####
+```{r, for DRB1.1501 stratified analysis}
+glm3.strat <-  glm(pheno~GENDER+DRB1.1501*ANCESTRY, data = modelData, family='binomial')
+visreg(glm3.strat, "DRB1.1501", by = "ANCESTRY",ylab = "log odds (Food Allergy)")
+```
+
+```{r, statistics for stratified analysis}
+glm.AS <-  glm(pheno~GENDER+DRB1.1501, data = modelData, family='binomial', subset=ANCESTRY=='Asian')
+glm.EU <-  glm(pheno~GENDER+DRB1.1501, data = modelData, family='binomial', subset=ANCESTRY=='European')
+glm.EA <-  glm(pheno~GENDER+DRB1.1501, data = modelData, family='binomial', subset=ANCESTRY=='MixedEuropeanAsian')
+
+# OR estimate 
+m.fit.AS <- exp(coef(summary(glm.AS))[, 1])
+m.fit.EU <- exp(coef(summary(glm.EU))[, 1])
+m.fit.EA <- exp(coef(summary(glm.EA))[, 1])
+
+# p-val and se estimate
+m.fit.pAS <- coef(summary(glm.AS))[, c(2,4)]
+m.fit.pEU <- coef(summary(glm.EU))[, c(2,4)]
+m.fit.pEA <- coef(summary(glm.EA))[, c(2,4)]
+
+# 95% CI for the OR.
+ci.AS <- exp(confint.default(glm.AS))
+ci.EU <- exp(confint.default(glm.EU))
+ci.EA <- exp(confint.default(glm.EA))
+
+#combine them
+stat.fit.AS=cbind(m.fit.AS,m.fit.pAS,ci.AS)
+colnames(stat.fit.AS) <- c("OR", "se.OR", "p.wald","2.5%","97.5%")
+stat.fit.EU=cbind(m.fit.EU,m.fit.pEU,ci.EU)
+colnames(stat.fit.EU) <- c("OR", "se.OR", "p.wald","2.5%","97.5%")
+stat.fit.EA=cbind(m.fit.EA,m.fit.pEU,ci.EA)
+colnames(stat.fit.EA) <- c("OR", "se.OR", "p.wald","2.5%","97.5%")
+
+#package up
+table=list(Asian=stat.fit.AS,European=stat.fit.EU,Admixed=stat.fit.EA)
+
+#print to screen
+table
+```
+
+
 Value is a list includes 'alleleVars' 'haplotypeCounts' 'modelData' 'dataMatrix'
 
 The input should be a data frame obtained by reading IMP1 or IMP2 imputation
@@ -86,42 +299,6 @@ library(ggplot2)
 ggplot(hapCount, aes(Allele, alleleFreq.controls, col=ANCESTRY)) + geom_point() + facet_wrap(~Gene, scale="free_y") + theme(axis.text.x=element_text(angle=45, hjust=1, size=5),legend.position="top")
 ```
 
-```{r create BIGDAWG compatible data structure, include=FALSE}
-asians=subset(dat, ANCESTRY=="Asian")
-europeans=subset(dat, ANCESTRY=="European")
-admixed=subset(dat, ANCESTRY=="MixedEuropeanAsian")
-
-rda=dcast(asians, IndividualID + Phenotype ~ Gene + Chromosome, value.var = "Allele")
-rda$Phenotype=ifelse(rda$Phenotype == 'controls', 0,1)
-rda=as.data.frame(apply(rda, 2, function(y) gsub("(\\d\\d)(\\d\\d)", "\\1:\\2", y)))
-colnames(rda)=c("subjectID","Disease", rep(c("A","B","C","DPA1","DPB1","DQA1","DQB1","DRB1"),each=2))
-
-rde=dcast(europeans, IndividualID + Phenotype ~ Gene + Chromosome, value.var = "Allele")
-rde$Phenotype=ifelse(rde$Phenotype == 'controls', 0,1)
-rde=as.data.frame(apply(rde, 2, function(y) gsub("(\\d\\d)(\\d\\d)", "\\1:\\2", y)))
-colnames(rde)=c("subjectID","Disease", rep(c("A","B","C","DPA1","DPB1","DQA1","DQB1","DRB1"),each=2))
-
-rdm=dcast(admixed, IndividualID + Phenotype ~ Gene + Chromosome, value.var = "Allele")
-rdm$Phenotype=ifelse(rdm$Phenotype == 'controls', 0,1)
-rdm=as.data.frame(apply(rdm, 2, function(y) gsub("(\\d\\d)(\\d\\d)", "\\1:\\2", y)))
-colnames(rdm)=c("subjectID","Disease", rep(c("A","B","C","DPA1","DPB1","DQA1","DQB1","DRB1"),each=2))
-
-```
-
-####test for HWE####
-```{r initiate a BIGDAWG analysis, include=TRUE}
-library(BIGDAWG)
-write.table(rda,file='bigdawgtest_asians.txt',sep='\t',row.names=F,col.names=T)
-write.table(rde,file='bigdawgtest_europeans.txt',sep='\t',row.names=F,col.names=T)
-write.table(rdm,file='bigdawgtest_admixed.txt',sep='\t',row.names=F,col.names=T)
-BIGDAWG(Data="bigdawgtest_asians.txt", HLA=T, All.Pairwise=F,Run.Tests = "HWE")
-BIGDAWG(Data="bigdawgtest_europeans.txt", HLA=T, All.Pairwise=F,Run.Tests = "HWE")
-BIGDAWG(Data="bigdawgtest_admixed.txt", HLA=T, All.Pairwise=F,Run.Tests = "HWE")
-``` 
-
-####create genotype matrix####
-
-#set allele posteriors to zero if less than 0.7
 
 ```{r initiate haplo.stats matrix}
 library(haplo.stats)
@@ -152,16 +329,6 @@ score.slide.bin <- haplo.score.slide(y.bin, genotypes, trait.type="binomial",
 plot.haplo.score.slide(score.slide.bin)
 ```
 
-####trend test####
-```{r}
-tt=trendTest.hlaAnalysis(counts)
-tt[tt$p.trend<0.05,]
-foo=which(tt[,2]<0.05)
-tt.up=tt[foo,]
-tt.up
-```
-
-trendTestSingle('DPB1.0301',counts)
 
 ####filter to class II genes####
 ```{r subset data}
@@ -250,84 +417,6 @@ fit.bin <- haplo.glm(y.bin ~ ancestry + gender + geno.glm, family = binomial,
 summary(fit.bin)
 ```
 
-dat=merge(rawdata,phenotypes,by.x="IndividualID",by.y='IID')
-dat=dat[!dat$Phenotype=='missing',]
-dat$ANCESTRY=as.factor(as.character(dat$ANCESTRY))
-
-haplotypeCounts <- dcast(melt(dat, measure.vars = "Posterior"),
-                    Gene + Allele ~ Phenotype,
-                    length)
-                    
-haplotypeCounts <- transform(haplotypeCounts, total = cases + controls)
-
-colnames(haplotypeCounts)[3:5] <- paste0("numHap.",colnames(haplotypeCounts)[3:5])
-
-res <- ddply(haplotypeCounts, .(Gene),
-                 mutate,
-                 alleleFreq.controls = numHap.controls / sum(numHap.controls),
-                 alleleFreq.cases    = numHap.cases    / sum(numHap.cases   ),
-                 alleleFreq.total    = numHap.total    / sum(numHap.total   ))
 
 
-#Filter to remove alleles with less than 1% representation in the population. 
-toremove=res$alleleFreq.total<0.01
-hapCount=res[toremove=='FALSE',]
 
-hapCount$Allele<-paste(hapCount$Gene, hapCount$Allele, sep = ".")
-
-##Names of Alleles to analyse###
-alleles.hf=hapCount$Allele
-
-# Names of all of the genes in the dataset.
-genes <- sort(unique(dat$Gene))
-
-# Combine gene and allele names.
-dat$G.Allele <- paste(dat$Gene, dat$Allele, sep = ".")
-
-# Complie data set.
-dataMatrix <- dcast(melt(dat, measure.vars = "Posterior"),
-                       IndividualID + ANCESTRY +GENDER + Phenotype ~ G.Allele,
-                       length)
-
-df=as.data.frame(dataMatrix[,-(1:4)])
-foo=colnames(df)%in%alleles.hf
-keep=df[,which(colnames(df)%in%alleles.hf)]
-modelData=cbind(dataMatrix[,c(1:4)],keep)
-
-#Define response
-pheno=as.factor(modelData$Phenotype)
-
-#Define the genes to test
-genes=sort(unique(dat$Gene))
-
-#Container for the result
-result <- vector("list")
-
-#Fit logistic regression model over each gene
-for (gene in genes) {
-  allVars         <-  grep(paste0(gene,"."), names(modelData),fixed=TRUE)
-  df              <-  modelData[, c(2,3,allVars)]
-  fit.all[[gene]] <-  glm(pheno~., df,family = "binomial")
-  result[[gene]]  <- summary(fit.all[[gene]])
-}
-
-result  
-
-fit.glm0 <-  glm(as.factor(Phenotype)~1,data = modelData, family='binomial')
-fit.glm1 <-  glm(as.factor(Phenotype)~ANCESTRY+GENDER,data = modelData, family='binomial')
-fit.glm2 <-  glm(as.factor(Phenotype)~ANCESTRY+GENDER+DQB1.0202, data = modelData, family='binomial')
-
-anova(fit.glm0,fit.glm1,fit.glm2,test="Chisq")
-
-# OR estimate and Wald test p-value.
- m.fit <- coef(summary(fit.glm2))[, -3, drop = FALSE]
-colnames(m.fit) <- c("logOR", "se.logOR", "p.wald")
-
-# 95% CI for the OR.
-ci <- exp(confint.default(fit.glm2))
-
-#package up
-table=cbind(m.fit,ci)
-
-#print to screen
-table
