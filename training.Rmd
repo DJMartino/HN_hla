@@ -4,13 +4,12 @@ author: "David Martino"
 date: "27 July 2015"
 output: html_document
 ---
-###stage 1: preparation of data###
+###preparation of data###
 
 ```{r load packages, include=FALSE}
 Sys.setenv(http_proxy="http://proxy1.ap.webscanningservice.com:3128") 
 library(reshape2)
 library(plyr)
-setwd("/Users/david/Documents/projects/healthnuts/hla/imputationData/imp2.v2/HN_hla/data")
 ```
 
 ```{r read in data, include=FALSE}
@@ -29,8 +28,50 @@ dat$ANCESTRY=as.factor(as.character(dat$ANCESTRY))
 table(dat$Phenotype,dat$ANCESTRY)
 ```
 
-### Summaries and data structures to represent HLA allele data.###
-#to be eliminated??????
+###Exploratory Analysis and Sanity Checks###
+
+####Examine Allele Frequency Distributions####
+Counts the number of cases and controls for each allele over each ancestral group
+The input should be a data frame obtained by reading IMP1 or IMP2 imputation
+calls, with an extra columns called "Phenotype" which takes two
+possible values: "cases" and "controls", and "ANCESTRY" grouping variable
+
+```{r initiate data structure with ancestry}
+source('/Users/david/Documents/projects/healthnuts/hla/imputationData/imp2.v2/HN_hla/hlaAnalysis_ancestry.R')
+counts=hlaCounts(dat,callThreshold=0.7)
+```
+
+####extract the haplotype counts####
+```{r haplotype counts with ancestry}
+hapCount=counts$haplotypeCounts
+
+#Filter to remove alleles with low confidence calls (below threshold). 
+foo=grep('NA',hapCount$Allele)
+hapCount=hapCount[-foo,]
+
+```
+
+####check concordance beetween allele frequnecy cases versus controls####
+```{r allelefreq cases v controls, fig.width=7, fig.height=7}
+library(car)
+z.cols <- cut(as.numeric(hapCount$ANCESTRY), 3, labels = c("red", "blue", "forest green"))
+plot(hapCount$alleleFreq.cases,hapCount$alleleFreq.controls, cex=0.8,pch=19, xlab= 'allele frequency cases', ylab= 'allele frequency controls', main = 'Sanity Check', col = as.character(z.cols))
+legend(0,0.8, unique(hapCount$ANCESTRY),pch=19, col = as.character(unique(z.cols)))
+with(hapCount, dataEllipse(hapCount$alleleFreq.cases, hapCount$alleleFreq.controls, ANCESTRY, level=0.95, fill=TRUE, fill.alpha=0.1, plot.points=FALSE, add=TRUE,col=levels(z.cols), center.pch="+"))
+coord=c(36, 230, 235, 242, 243, 284, 286, 332, 351)
+with(hapCount[coord,],text(alleleFreq.cases,alleleFreq.controls,Allele, cex=0.8))
+```
+
+
+####Plot allele freq controls by ancestry####
+```{r pop strat controls, fig.width=10, fig.height=10}
+library(ggplot2)
+ggplot(hapCount, aes(Allele, alleleFreq.controls, col=ANCESTRY)) + geom_point() + facet_wrap(~Gene, scale="free_y") + theme(axis.text.x=element_text(angle=45, hjust=1, size=5),legend.position="top")
+```
+
+###QC Stage###
+
+#### Summaries and data structures to represent HLA allele data.####
 Counts the number of cases and controls for each allele.
 Creates a matrix representation which can be used for regression modelling.
 ```{r initiate data structure}
@@ -48,7 +89,7 @@ hapCount=hapCount[-foo,]
 ```
 
 
-###QC filtering to remove alleles with less than 1% representation in the population
+####QC filtering to remove alleles with less than 1% representation in the population####
 ```{r}
 toremove=hapCount$alleleFreq.total<0.01
 hapCount=hapCount[toremove=='FALSE',]
@@ -63,8 +104,8 @@ genes <- sort(unique(dat$Gene))
 dat$G.Allele <- paste(dat$Gene, dat$Allele, sep = ".")
 ```
 
-###plot of hapCount freq in population
-```{r}
+####plot of hapCount freq in population####
+```{r,fig.width=7, fig.height=7}
 plot(as.factor(hapCount$Allele),hapCount$alleleFreq.cases, xaxt="n",main='Allele Frequency cases v controls')
 with(hapCount,text(as.factor(Allele),alleleFreq.cases,Allele, cex=0.6,col='red'))
 points(as.factor(hapCount$Allele),hapCount$alleleFreq.controls, xaxt="n")
@@ -107,7 +148,7 @@ anova(fit.glm0,fit.glm1,fit.glm2,fit.glm3,fit.glm4,test="LRT")
 ```
 
 ####Model vis####
-```{r, DQA1.0102 visualise the model fit}
+```{r, DQA1.0102 visualise the model fit,fig.width=7, fig.height=7}
 library(visreg)
 par(mfrow=c(2,3))
 visreg(fit.glm2, ylab = "log odds (Food Allergy)")
@@ -141,7 +182,7 @@ glm2.strat <-  glm(pheno~GENDER+DQA1.0102*ANCESTRY, data = modelData, family='bi
 visreg(glm2.strat, "DQA1.0102", by = "ANCESTRY",ylab = "log odds (Food Allergy)")
 ```
 
-```{r, statistics for stratified analysis}
+```{r, statistics for stratified analysis DQA1}
 glm.AS <-  glm(pheno~GENDER+DQA1.0102, data = modelData, family='binomial', subset=ANCESTRY=='Asian')
 glm.EU <-  glm(pheno~GENDER+DQA1.0102, data = modelData, family='binomial', subset=ANCESTRY=='European')
 glm.EA <-  glm(pheno~GENDER+DQA1.0102, data = modelData, family='binomial', subset=ANCESTRY=='MixedEuropeanAsian')
@@ -177,7 +218,7 @@ table
 ```
 
 ####Model vis####
-```{r, DRB1.1501 visualise the model fit}
+```{r, DRB1.1501 visualise the model fit,fig.width=7, fig.height=7}
 library(visreg)
 par(mfrow=c(2,3))
 visreg(fit.glm3, ylab = "log odds (Food Allergy)")
@@ -211,7 +252,7 @@ glm3.strat <-  glm(pheno~GENDER+DRB1.1501*ANCESTRY, data = modelData, family='bi
 visreg(glm3.strat, "DRB1.1501", by = "ANCESTRY",ylab = "log odds (Food Allergy)")
 ```
 
-```{r, statistics for stratified analysis}
+```{r, statistics for stratified analysis DRB1}
 glm.AS <-  glm(pheno~GENDER+DRB1.1501, data = modelData, family='binomial', subset=ANCESTRY=='Asian')
 glm.EU <-  glm(pheno~GENDER+DRB1.1501, data = modelData, family='binomial', subset=ANCESTRY=='European')
 glm.EA <-  glm(pheno~GENDER+DRB1.1501, data = modelData, family='binomial', subset=ANCESTRY=='MixedEuropeanAsian')
@@ -246,77 +287,32 @@ table=list(Asian=stat.fit.AS,European=stat.fit.EU,Admixed=stat.fit.EA)
 table
 ```
 
-
-Value is a list includes 'alleleVars' 'haplotypeCounts' 'modelData' 'dataMatrix'
-
-The input should be a data frame obtained by reading IMP1 or IMP2 imputation
-calls, with an extra column attached called "Phenotype" which takes two
-possible values: "cases" and "controls".
-
-```{r initiate data structure}
-counts=hlaCounts(dat,callThreshold=0.7)
-```
-
-####extract the haplotype counts####
-```{r haplotype counts}
-hapCount=counts$haplotypeCounts
-
-#Filter to remove alleles with low confidence calls (below threshold). 
-foo=grep('NA',hapCount$Allele)
-hapCount=hapCount[-foo,]
-
-```
-
-####check concordance beetween allele frequnecy cases versus controls####
-```{r allelefreq cases v controls, fig.width=5, fig.height=5}
-library(car)
-z.cols <- cut(as.numeric(hapCount$ANCESTRY), 3, labels = c("red", "blue", "forest green"))
-plot(hapCount$alleleFreq.cases,hapCount$alleleFreq.controls, cex=0.8,pch=19, xlab= 'allele frequency cases', ylab= 'allele frequency controls', main = 'Sanity Check', col = as.character(z.cols))
-legend(0,0.8, unique(hapCount$ANCESTRY),pch=19, col = as.character(unique(z.cols)))
-with(hapCount, dataEllipse(hapCount$alleleFreq.cases, hapCount$alleleFreq.controls, ANCESTRY, level=0.95, fill=TRUE, fill.alpha=0.1, plot.points=FALSE, add=TRUE,col=levels(z.cols), center.pch="+"))
-coord=c(36, 230, 235, 242, 243, 284, 286, 332, 351)
-with(hapCount[coord,],text(alleleFreq.cases,alleleFreq.controls,Allele, cex=0.8))
-```
-
-####simple barplot vizualisation####
-```{r barplot freqs, fig.width=7, fig.height=7, results='hide'}
-repbarplot <- function(genes) {
-    hapcount1 <- hapCount[hapCount$Gene == genes,]
-    barplot(hapcount1[,8],col = "white", border ="blue",ylim=range(hapcount1[,8], hapcount1[,7]))
-    barplot(hapcount1[,7], col = "white", border = "red", add = TRUE,names.arg = hapcount1$Allele
-    ,cex.names=0.7, las=2,yaxt="n", main = print(unique(hapcount1$Gene)))
-    legend('topright',c('case','control'),pch=0,col=c('red', 'blue'))
-}
-
-par(mfrow = c(4, 2))
-par(mar = c(4, 2, 2, 4))
-sapply(unique(hapCount$Gene),function(x) repbarplot(x))
-```
-
-####Plot allele freq controls by ancestry####
-```{r pop strat controls, fig.width=10, fig.height=10}
-library(ggplot2)
-ggplot(hapCount, aes(Allele, alleleFreq.controls, col=ANCESTRY)) + geom_point() + facet_wrap(~Gene, scale="free_y") + theme(axis.text.x=element_text(angle=45, hjust=1, size=5),legend.position="top")
-```
-
-
+###Haplotype level analysis###  ???Am i filtering here? Use dat.2 or dat
+####initiate a haplo stats matrix####
 ```{r initiate haplo.stats matrix}
 library(haplo.stats)
-#dat$Allele=ifelse(dat$Posterior < 0.7, 0, dat$Allele)
+
 rd=dcast(dat, IndividualID + GENDER + ANCESTRY + Phenotype ~ Gene + Chromosome, value.var = "Allele")
 colnames(rd)[5:20]= gsub("_", ".a",colnames(rd)[5:20])
 head(rd)
 ```
 
 ###Global haplotype score sliding###
-Identify subhaplotypes from a group of loci using association testing
+Identify subhaplotypes from a group of loci using association testing under an additive model
+Consider a 'window' of 2 genes
+P-value estimates by permutation adjusted for gender and ethnicity
+Consider only haplotypes with an obverved pop frequency > 0.01
 ```{r}
+#Recode phenotype
 y.bin <- 1*(rd$Phenotype=="cases")
 
+#matrix of confounding variables
 x.ma <- cbind(rd$ANCESTRY, rd$GENDER)
 
 genotypes=rd[,-c(1:4)]
 rownames(genotypes)=rd$IndividualID
+
+#re-order columns according to agree with chromosomal location
 genotypes=genotypes[,c(1,2,5,6,3,4,15,16,11,12,13,14,7,8,9,10)]
 
 label=c("A","C","B","DRB1","DQA1","DQB1","DPA1","DPB1")
@@ -329,18 +325,17 @@ score.slide.bin <- haplo.score.slide(y.bin, genotypes, trait.type="binomial",
 plot.haplo.score.slide(score.slide.bin)
 ```
 
-
-####filter to class II genes####
+####filter to class II genes DRB1 and DQB1 combinations####
 ```{r subset data}
-genotypes=rd[,c(11:20)]
+genotypes=genotypes[,c(7:10)]
 rownames(genotypes)=rd$IndividualID
-label=sort(unique(dat$Gene))
-classII=as.character(label[-c(1:3)])
+classII=as.character(label[c(4,5)])
 head(genotypes)
 ```
 
+###QC Removal of missing alleles###
 ####Compute the number of loci with 0,1 or 2 missing alleles and count the number of potential haplotype pairs that are consistent with the observed data. Remove missingness.####
-```{r}
+```{r,include=FALSE}
 ###Preview missing data###
 geno.desc <- summaryGeno(genotypes, miss.val=c(0,NA))
 
@@ -350,13 +345,12 @@ geno.updated <- genotypes[-miss.all,]
 ```
 
 ###Haplotype frequency estimation###
-
 computes maximum likelihood estimates of haplotype probabilities. Posterior probabilities of haplotype pairs for each subject are also computed.Haplotype probabilities by group are also computed.
 ```{r compute haplotype probs}
 seed <- c(17, 53, 1, 40, 37, 0, 62, 56, 5, 52, 12, 1)
 set.seed(seed)
 
-save.em <- haplo.em(geno=geno.updated, locus.label=classII, miss.val=c(NA),
+save.em <- haplo.em(geno=genotypes, locus.label=classII, miss.val=c(NA),
   control = haplo.em.control(n.try = 40, insert.batch.size=2))
 
 print(save.em,nlines=20)
@@ -365,8 +359,7 @@ summary(save.em,show.haplo=TRUE,nlines=20)
 
 ####Compute haplotype frequencies according to each level of grouping variable.#####
 ```{r compute group frequencies}
-y.bin = y.bin[-miss.all]
-group.bin <- haplo.group(y.bin, geno.updated, locus.label=as.character(classII), miss.val=0)
+group.bin <- haplo.group(y.bin, genotypes, locus.label=as.character(classII), miss.val=0)
 print(group.bin, nlines=10)
 ```
 
@@ -378,45 +371,36 @@ Computes the maximum likelihood estimates of the haplotype frequencies and the p
 
 ```{r initiate EM algorithm}
 x.ma <- cbind(rd$ANCESTRY, rd$GENDER)
-x.ma=x.ma[-miss.all,]
-  score.bin <- haplo.score(y.bin, geno.updated, trait.type="binomial",
+
+score.bin <- haplo.score(y.bin, genotypes, trait.type="binomial",
   x.adj = x.ma, skip.haplo = 0.01,haplo.effect="additive",miss.val=0,
   locus.label=as.character(classII),simulate=TRUE,
   sim.control=score.sim.control(min.sim=200,max.sim=500,verbose=F))
 
-print.haplo.score(score.bin, nlines=20)
+print.haplo.score(score.bin)
 ```
 
 ####merge stats with haplo freq by group####
 ```{r merge stats with freqs}
 merge.bin <- haplo.score.merge(score.bin, group.bin)
-print.haplo.score.merge(merge.bin,order.by='p.val')
-```
-
-###Case control analysis unadjusted###
-```{r case control, warning=FALSE}
-cc.hla <- haplo.cc(y=y.bin, geno=geno.updated, locus.label = classII,
- control=haplo.glm.control(haplo.freq.min=.01))
-print(cc.hla, nlines=20, digits=2)
+print.haplo.score.merge(merge.bin,order.by="p.val")
 ```
 
 
 ###Binomial regression models###
 ```{r binomial regression, warning=FALSE}
-geno.glm <- setupGeno(geno.updated, miss.val=c(0,NA), locus.label=classII)
-glm.data <- data.frame(geno.glm, ancestry=rd$ANCESTRY[-miss.all], gender=rd$GENDER[-miss.all], y.bin=y.bin)
-
-#weight cases to pop prevalence of 3%
-weights= ifelse(y.bin==1,0.03,1)
+geno.glm <- setupGeno(genotypes, miss.val=c(0,NA), locus.label=classII)
+glm.data <- data.frame(geno.glm, ancestry=rd$ANCESTRY, gender=rd$GENDER, y.bin=y.bin)
 
 fit.bin <- haplo.glm(y.bin ~ ancestry + gender + geno.glm, family = binomial,
- data=glm.data, na.action = "na.geno.keep",
- locus.label=classII,weights=weights,
- control = haplo.glm.control(haplo.effect='additive',haplo.freq.min = .01))
+                     data=glm.data, na.action = "na.exclude",
+                     locus.label=classII,
+                     control = haplo.glm.control(haplo.effect='additive',haplo.freq.min = .01,haplo.base= 6))
 
 summary(fit.bin)
+
+fit.bin0<- glm(y.bin ~ ancestry + gender, family = binomial, data=glm.data)
+anova.haplo.glm(fit.bin0, fit.bin)
 ```
-
-
 
 
