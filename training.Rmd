@@ -403,4 +403,74 @@ fit.bin0<- glm(y.bin ~ ancestry + gender, family = binomial, data=glm.data)
 anova.haplo.glm(fit.bin0, fit.bin)
 ```
 
+####filter to class II genes DPA1 and DPB1 combinations####
+```{r subset data 2}
+genotypes=rd[,-c(1:4)]
+rownames(genotypes)=rd$IndividualID
+genotypes=genotypes[,c(1,2,5,6,3,4,15,16,11,12,13,14,7,8,9,10)]
+genotypes=genotypes[,c(13:16)]
+rownames(genotypes)=rd$IndividualID
+classII=as.character(label[c(7,8)])
+head(genotypes)
+```
+
+###Haplotype frequency estimation###
+computes maximum likelihood estimates of haplotype probabilities. Posterior probabilities of haplotype pairs for each subject are also computed.Haplotype probabilities by group are also computed.
+```{r compute haplotype probs 2}
+seed <- c(17, 53, 1, 40, 37, 0, 62, 56, 5, 52, 12, 1)
+set.seed(seed)
+
+save.em <- haplo.em(geno=genotypes, locus.label=classII, miss.val=c(NA),
+  control = haplo.em.control(n.try = 40, insert.batch.size=2))
+
+print(save.em,nlines=20)
+summary(save.em,show.haplo=TRUE,nlines=20)
+```
+
+####Compute haplotype frequencies according to each level of grouping variable.#####
+```{r compute group frequencies 2}
+group.bin <- haplo.group(y.bin, genotypes, locus.label=as.character(classII), miss.val=0)
+print(group.bin, nlines=10)
+```
+
+###test assocaition between haplotypes and phenotype using EM method of Schaid et al###
+
+Hapltype effects modelled as 'additive' adjusting for gender and ancestry
+p-values computed by permutation of traits and covariates.
+Computes the maximum likelihood estimates of the haplotype frequencies and the posterior probabilities of the pairs of haplotypes for each subject using an EM algorithm. The algorithm begins with haplotypes from a subset of the loci and progressively discards those with low frequency before inserting more loci. The process is repeated until haplotypes for all loci are established. The posterior probabilities are used to compute the score statistics for the association of (ambiguous) haplotypes with traits. 
+
+```{r initiate EM algorithm 2}
+x.ma <- cbind(rd$ANCESTRY, rd$GENDER)
+
+score.bin <- haplo.score(y.bin, genotypes, trait.type="binomial",
+  x.adj = x.ma, skip.haplo = 0.01,haplo.effect="additive",miss.val=0,
+  locus.label=as.character(classII),simulate=TRUE,
+  sim.control=score.sim.control(min.sim=200,max.sim=500,verbose=F))
+
+print.haplo.score(score.bin)
+```
+
+####merge stats with haplo freq by group####
+```{r merge stats with freqs 2}
+merge.bin <- haplo.score.merge(score.bin, group.bin)
+print.haplo.score.merge(merge.bin,order.by="p.val")
+```
+
+###Binomial regression models###
+```{r binomial regression 2, warning=FALSE}
+geno.glm <- setupGeno(genotypes, miss.val=c(0,NA), locus.label=classII)
+glm.data <- data.frame(geno.glm, ancestry=rd$ANCESTRY, gender=rd$GENDER, y.bin=y.bin)
+
+fit.bin <- haplo.glm(y.bin ~ ancestry + gender + geno.glm, family = binomial,
+                     data=glm.data, na.action = "na.exclude",
+                     locus.label=classII,
+                     control = haplo.glm.control(haplo.effect='additive',haplo.freq.min = .01,haplo.base= 6))
+
+summary(fit.bin)
+
+fit.bin0<- glm(y.bin ~ ancestry + gender, family = binomial, data=glm.data)
+anova.haplo.glm(fit.bin0, fit.bin)
+```
+
+
 
