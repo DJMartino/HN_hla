@@ -1,7 +1,7 @@
 ---
 title: "hla_analysis"
 author: "David Martino"
-date: "27 July 2015"
+date: "14 Sept 2015"
 output: html_document
 ---
 ###preparation of data###
@@ -24,8 +24,6 @@ phenotypes$Phenotype=ifelse(phenotypes$PEANUT_ALLERGY==2,'cases',
 dat=merge(rawdata,phenotypes,by.x="IndividualID",by.y='IID')
 dat=dat[!dat$Phenotype=='missing',]
 dat$ANCESTRY=as.factor(as.character(dat$ANCESTRY))
-
-table(dat$Phenotype,dat$ANCESTRY)
 ```
 
 ###Exploratory Analysis and Sanity Checks###
@@ -39,6 +37,8 @@ possible values: "cases" and "controls", and "ANCESTRY" grouping variable
 ```{r initiate data structure with ancestry}
 source('/Users/david/Documents/projects/healthnuts/hla/imputationData/imp2.v2/HN_hla/hlaAnalysis_ancestry.R')
 counts=hlaCounts(dat,callThreshold=0.7)
+table(counts$modelData$Phenotype)
+table(counts$modelData$Phenotype,counts$modelData$ANCESTRY)
 ```
 
 ####extract the haplotype counts####
@@ -217,7 +217,7 @@ table=list(Asian=stat.fit.AS,European=stat.fit.EU,Admixed=stat.fit.EA)
 table
 ```
 
-####Model vis####
+####Model vis DRB1.1501####
 ```{r, DRB1.1501 visualise the model fit,fig.width=7, fig.height=7}
 library(visreg)
 par(mfrow=c(2,3))
@@ -372,6 +372,8 @@ Computes the maximum likelihood estimates of the haplotype frequencies and the p
 ```{r initiate EM algorithm}
 x.ma <- cbind(rd$ANCESTRY, rd$GENDER)
 
+head(genotypes)
+
 score.bin <- haplo.score(y.bin, genotypes, trait.type="binomial",
   x.adj = x.ma, skip.haplo = 0.01,haplo.effect="additive",miss.val=0,
   locus.label=as.character(classII),simulate=TRUE,
@@ -391,6 +393,8 @@ print.haplo.score.merge(merge.bin,order.by="p.val")
 ```{r binomial regression, warning=FALSE}
 geno.glm <- setupGeno(genotypes, miss.val=c(0,NA), locus.label=classII)
 glm.data <- data.frame(geno.glm, ancestry=rd$ANCESTRY, gender=rd$GENDER, y.bin=y.bin)
+
+head(glm.data)
 
 fit.bin <- haplo.glm(y.bin ~ ancestry + gender + geno.glm, family = binomial,
                      data=glm.data, na.action = "na.exclude",
